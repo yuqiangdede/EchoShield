@@ -181,8 +181,8 @@ def mux_processed_audio_with_padding(
     output_mp4.parent.mkdir(parents=True, exist_ok=True)
     video_filter = (
         f"[0:v:0]trim=duration={content_duration:.6f},setpts=PTS-STARTPTS,"
-        f"tpad=start_mode=clone:start_duration={padding_seconds:.6f}:"
-        f"stop_mode=clone:stop_duration={padding_seconds:.6f}[v]"
+        f"tpad=start_mode=clone:start_duration={padding_seconds:.6f}s:"
+        f"stop_mode=clone:stop_duration={padding_seconds:.6f}s[v]"
     )
     cmd = [
         "ffmpeg", "-y", "-v", "error",
