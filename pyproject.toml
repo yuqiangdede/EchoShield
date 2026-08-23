@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "echoshield"
+version = "0.2.0"
+description = "MP4 audio robustness testing toolkit"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [{name = "EchoShield contributors"}]
+dependencies = [
+  "numpy>=1.24",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+echoshield = "echoshield.cli:main"
+echoshield-doctor = "echoshield.doctor:main"
+echoshield-demo = "echoshield.demo:main"
+
+[tool.setuptools.packages.find]
+include = ["echoshield*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

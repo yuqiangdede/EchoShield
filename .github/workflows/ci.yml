@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install FFmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Install EchoShield
+        run: pip install -e .[dev]
+      - name: Unit tests
+        run: pytest -q
+      - name: Environment check
+        run: echoshield-doctor
+      - name: End-to-end MP4 demo
+        run: echoshield-demo --output-dir ci_demo --duration 6 --profile codec
+      - name: Verify outputs
+        run: |
+          test -s ci_demo/demo_output.mp4
+          test -s ci_demo/demo_output_report.json
+          test -s ci_demo/demo_output_report.html
+          ffprobe -v error -show_entries stream=codec_type,codec_name -of compact ci_demo/demo_output.mp4
