@@ -30,6 +30,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output-dir", type=Path, default=Path("demo_output"))
     parser.add_argument("--duration", type=float, default=12.0)
     parser.add_argument("--profile", choices=("mild", "codec", "resample"), default="codec")
+    parser.add_argument("--padding-test", action="store_true")
+    parser.add_argument("--padding-seconds", type=float, default=3.0)
     args = parser.parse_args(argv)
 
     check_ffmpeg()
@@ -39,10 +41,15 @@ def main(argv: list[str] | None = None) -> int:
     output_path = out_dir / "demo_output.mp4"
     _generate_demo(input_path, args.duration)
     print(f"Generated demo input: {input_path}")
-    rc = echoshield_main([
+
+    cli_args = [
         str(input_path), "-o", str(output_path), "--profile", args.profile,
         "--window-seconds", "4", "--step-seconds", "2",
-    ])
+    ]
+    if args.padding_test:
+        cli_args += ["--padding-test", "--padding-seconds", str(args.padding_seconds)]
+
+    rc = echoshield_main(cli_args)
     if rc == 0:
         print(f"\nDemo completed. Open: {output_path.with_name(output_path.stem + '_report.html')}")
     return rc
