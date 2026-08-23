@@ -41,6 +41,8 @@ def run(args: argparse.Namespace) -> dict[str, object]:
         raise ValueError("MVP currently accepts MP4 input only")
 
     output_path = (args.output or _default_output(input_path)).expanduser().resolve()
+    if output_path == input_path:
+        raise ValueError("Output path must be different from input path")
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     probe_data = probe(input_path)
