@@ -83,6 +83,7 @@ def mux_processed_audio(
         "-map", "0:v:0?",
         "-map", "1:a:0",
         "-map_metadata", "0",
+        "-map_chapters", "0",
         "-c:v", "copy",
         "-c:a", "aac",
         "-b:a", audio_bitrate,
@@ -91,3 +92,5 @@ def mux_processed_audio(
         cmd += ["-t", f"{limit_seconds:.3f}"]
     cmd += ["-shortest", "-movflags", "+faststart", str(output_mp4)]
     _run(cmd)
+    if not output_mp4.exists() or output_mp4.stat().st_size == 0:
+        raise MediaError("FFmpeg finished but output MP4 was not created")
