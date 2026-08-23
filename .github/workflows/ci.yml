@@ -20,11 +20,20 @@ jobs:
         run: pytest -q
       - name: Environment check
         run: echoshield-doctor
-      - name: End-to-end MP4 demo
-        run: echoshield-demo --output-dir ci_demo --duration 6 --profile codec
+      - name: End-to-end MP4 demo with padding
+        run: echoshield-demo --output-dir ci_demo --duration 6 --profile codec --padding-test --padding-seconds 1
       - name: Verify outputs
         run: |
           test -s ci_demo/demo_output.mp4
           test -s ci_demo/demo_output_report.json
           test -s ci_demo/demo_output_report.html
           ffprobe -v error -show_entries stream=codec_type,codec_name -of compact ci_demo/demo_output.mp4
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          report = json.loads(Path('ci_demo/demo_output_report.json').read_text(encoding='utf-8'))
+          assert report['transform']['padding_test']['enabled'] is True
+          assert report['transform']['video_mode'] == 'reencode_with_frame_clone'
+          assert float(report['output']['audio']['duration']) > float(report['input']['audio']['duration'])
+          print('Padding E2E verification passed')
+          PY
