@@ -8,7 +8,15 @@ from pathlib import Path
 
 from . import __version__
 from .detector import analyze_similarity
-from .media import check_ffmpeg, extract_audio_wav, get_audio_info, mux_processed_audio, probe
+from .media import (
+    check_ffmpeg,
+    create_padded_test_audio,
+    extract_audio_wav,
+    get_audio_info,
+    mux_processed_audio,
+    mux_processed_audio_with_padding,
+    probe,
+)
 from .metrics import compare_wavs
 from .report import write_html_report, write_json_report
 from .transforms import PROFILES, apply_profile
@@ -29,6 +37,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--window-seconds", type=float, default=10.0, help="Detector window length")
     parser.add_argument("--step-seconds", type=float, default=5.0, help="Detector window step")
     parser.add_argument("--match-threshold", type=float, default=0.90, help="Window match threshold 0..1")
+    parser.add_argument(
+        "--padding-test",
+        action="store_true",
+        help="Add reproducible low-level test audio before/after content and extend video frames",
+    )
+    parser.add_argument(
+        "--padding-seconds",
+        type=float,
+        default=3.0,
+        help="Padding duration at both beginning and end (0.25..10 seconds)",
+    )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     return parser
 
@@ -44,6 +63,8 @@ def run(args: argparse.Namespace) -> dict[str, object]:
         raise FileNotFoundError(input_path)
     if input_path.suffix.lower() != ".mp4":
         raise ValueError("EchoShield currently accepts MP4 input only")
+    if args.padding_test and not 0.25 <= args.padding_seconds <= 10.0:
+        raise ValueError("--padding-seconds must be between 0.25 and 10.0")
 
     output_path = (args.output or _default_output(input_path)).expanduser().resolve()
     if output_path == input_path:
@@ -66,7 +87,10 @@ def run(args: argparse.Namespace) -> dict[str, object]:
     try:
         original_wav = workdir / "original.wav"
         candidate_wav = workdir / "candidate.wav"
+        padded_wav = workdir / "candidate_padded.wav"
         final_wav = workdir / "final_mp4_audio.wav"
+        aligned_final_wav = workdir / "final_mp4_content_aligned.wav"
+
         extract_audio_wav(input_path, original_wav, limit_seconds=limit_seconds)
         transform = apply_profile(
             args.profile,
@@ -77,18 +101,49 @@ def run(args: argparse.Namespace) -> dict[str, object]:
             workdir=workdir,
         )
         pre_metrics = compare_wavs(original_wav, candidate_wav)
+        content_duration = float(pre_metrics["candidate_duration_s"])
 
-        mux_processed_audio(
-            input_path,
-            candidate_wav,
-            output_path,
-            audio_bitrate=args.audio_bitrate,
-            limit_seconds=limit_seconds,
-        )
+        padding_info: dict[str, object] = {"enabled": False}
+        if args.padding_test:
+            padding_info = create_padded_test_audio(
+                candidate_wav,
+                padded_wav,
+                sample_rate=audio.sample_rate,
+                channels=audio.channels,
+                padding_seconds=args.padding_seconds,
+                workdir=workdir,
+            )
+            mux_processed_audio_with_padding(
+                input_path,
+                padded_wav,
+                output_path,
+                content_duration=content_duration,
+                padding_seconds=args.padding_seconds,
+                audio_bitrate=args.audio_bitrate,
+            )
+        else:
+            mux_processed_audio(
+                input_path,
+                candidate_wav,
+                output_path,
+                audio_bitrate=args.audio_bitrate,
+                limit_seconds=limit_seconds,
+            )
+
         output_probe = probe(output_path)
         output_audio = get_audio_info(output_probe)
         extract_audio_wav(output_path, final_wav)
-        final_metrics = compare_wavs(original_wav, final_wav)
+
+        if args.padding_test:
+            extract_audio_wav(
+                output_path,
+                aligned_final_wav,
+                start_seconds=args.padding_seconds,
+                limit_seconds=content_duration,
+            )
+            final_metrics = compare_wavs(original_wav, aligned_final_wav)
+        else:
+            final_metrics = compare_wavs(original_wav, final_wav)
 
         detector = None
         if not args.no_detector:
@@ -99,6 +154,10 @@ def run(args: argparse.Namespace) -> dict[str, object]:
                 step_seconds=args.step_seconds,
                 match_threshold=args.match_threshold,
             )
+
+        transform = dict(transform)
+        transform["padding_test"] = padding_info
+        transform["video_mode"] = "reencode_with_frame_clone" if args.padding_test else "stream_copy"
 
         report: dict[str, object] = {
             "echoshield_version": __version__,
