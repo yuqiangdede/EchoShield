@@ -7,6 +7,7 @@ import tempfile
 from pathlib import Path
 
 from . import __version__
+from .detector import analyze_similarity
 from .media import check_ffmpeg, extract_audio_wav, get_audio_info, mux_processed_audio, probe
 from .metrics import compare_wavs
 from .report import write_html_report, write_json_report
@@ -24,6 +25,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--audio-bitrate", default="192k", help="Output AAC bitrate")
     parser.add_argument("--fast", action="store_true", help="Preview mode: process first 60 seconds only")
     parser.add_argument("--keep-workdir", action="store_true", help="Keep intermediate WAV/M4A files")
+    parser.add_argument("--no-detector", action="store_true", help="Skip local spectral similarity detector")
+    parser.add_argument("--window-seconds", type=float, default=10.0, help="Detector window length")
+    parser.add_argument("--step-seconds", type=float, default=5.0, help="Detector window step")
+    parser.add_argument("--match-threshold", type=float, default=0.90, help="Window match threshold 0..1")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     return parser
 
@@ -38,7 +43,7 @@ def run(args: argparse.Namespace) -> dict[str, object]:
     if not input_path.exists():
         raise FileNotFoundError(input_path)
     if input_path.suffix.lower() != ".mp4":
-        raise ValueError("MVP currently accepts MP4 input only")
+        raise ValueError("EchoShield currently accepts MP4 input only")
 
     output_path = (args.output or _default_output(input_path)).expanduser().resolve()
     if output_path == input_path:
@@ -61,6 +66,7 @@ def run(args: argparse.Namespace) -> dict[str, object]:
     try:
         original_wav = workdir / "original.wav"
         candidate_wav = workdir / "candidate.wav"
+        final_wav = workdir / "final_mp4_audio.wav"
         extract_audio_wav(input_path, original_wav, limit_seconds=limit_seconds)
         transform = apply_profile(
             args.profile,
@@ -70,7 +76,8 @@ def run(args: argparse.Namespace) -> dict[str, object]:
             channels=audio.channels,
             workdir=workdir,
         )
-        metrics = compare_wavs(original_wav, candidate_wav)
+        pre_metrics = compare_wavs(original_wav, candidate_wav)
+
         mux_processed_audio(
             input_path,
             candidate_wav,
@@ -78,6 +85,20 @@ def run(args: argparse.Namespace) -> dict[str, object]:
             audio_bitrate=args.audio_bitrate,
             limit_seconds=limit_seconds,
         )
+        output_probe = probe(output_path)
+        output_audio = get_audio_info(output_probe)
+        extract_audio_wav(output_path, final_wav)
+        final_metrics = compare_wavs(original_wav, final_wav)
+
+        detector = None
+        if not args.no_detector:
+            detector = analyze_similarity(
+                original_wav,
+                final_wav,
+                window_seconds=args.window_seconds,
+                step_seconds=args.step_seconds,
+                match_threshold=args.match_threshold,
+            )
 
         report: dict[str, object] = {
             "echoshield_version": __version__,
@@ -93,18 +114,29 @@ def run(args: argparse.Namespace) -> dict[str, object]:
                     "duration": audio.duration,
                 },
             },
-            "output": {"path": str(output_path), "audio_bitrate": args.audio_bitrate},
+            "output": {
+                "path": str(output_path),
+                "audio_bitrate": args.audio_bitrate,
+                "audio": {
+                    "codec": output_audio.codec,
+                    "sample_rate": output_audio.sample_rate,
+                    "channels": output_audio.channels,
+                    "bit_rate": output_audio.bit_rate,
+                    "duration": output_audio.duration,
+                },
+            },
             "transform": transform,
-            "metrics": metrics,
+            "metrics": {"pre_mux": pre_metrics, "final_mp4": final_metrics},
+            "detector": detector,
         }
         json_path = output_path.with_name(f"{output_path.stem}_report.json")
         html_path = output_path.with_name(f"{output_path.stem}_report.html")
-        write_json_report(json_path, report)
-        write_html_report(html_path, report)
         report["report_json"] = str(json_path)
         report["report_html"] = str(html_path)
         if args.keep_workdir:
             report["workdir"] = str(workdir)
+        write_json_report(json_path, report)
+        write_html_report(html_path, report)
         return report
     finally:
         if temp_ctx is not None:
@@ -116,7 +148,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         result = run(args)
-    except Exception as exc:  # CLI boundary
+    except Exception as exc:
         print(f"EchoShield error: {exc}", file=sys.stderr)
         return 1
     print(json.dumps(result, ensure_ascii=False, indent=2))
