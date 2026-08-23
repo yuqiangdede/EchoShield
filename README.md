@@ -12,7 +12,7 @@ EchoShield 是一个面向**音频识别鲁棒性测试**的本地工具：输�
 - 内置 `mild` / `codec` / `resample` 三种测试 profile
 - 输出音频质量指标：时长、RMS、峰值、SNR、频谱距离
 - 生成 `report.json` 和单文件 `report.html`
-- `fast` 模式只分析前 60 秒，便于快速开发验证
+- `fast` 模式只处理前 60 秒，并输出 60 秒预览 MP4，便于快速开发验证
 
 ## 环境
 
