@@ -1,15 +1,16 @@
 # EchoShield
 
-EchoShield 是一个面向**音频识别鲁棒性测试**的本地工具：输入 MP4，保留原视频流，仅对音频执行可配置的测试变换，重新封装为 MP4，并对最终 MP4 的音频重新解码后做质量与相似度评估。
+EchoShield 是一个面向**音频识别鲁棒性测试**的本地工具：输入 MP4，对音频执行可配置的测试变换并重新封装为 MP4，同时对最终 MP4 的音频重新解码后做质量与相似度评估。
 
 > 本项目定位为自有/授权音频与识别系统的鲁棒性验证，不包含针对第三方版权检测服务的自动绕过优化。
 
 ## 当前可直接测试
 
 - 输入 `MP4`，输出仍为 `MP4`
-- 视频流 `stream copy`，不重新编码
+- 默认模式视频流 `stream copy`，不重新编码
 - 音频提取为 PCM WAV 后执行测试变换
 - 内置 `mild` / `codec` / `resample` 三种测试 profile
+- `--padding-test`：前后加入可复现的低电平测试音，并同步延长首尾画面
 - 输出 MP4 重新解码后再做最终质量检测
 - 本地频谱签名相似度检测器
 - 10 秒窗口 / 5 秒步长的滑动窗口检测，可自定义
@@ -50,6 +51,12 @@ powershell -ExecutionPolicy Bypass -File .\scripts\setup_windows.ps1 -InstallFFm
 
 ```powershell
 .\.venv\Scripts\echoshield-demo.exe
+```
+
+测试 padding 模式：
+
+```powershell
+.\.venv\Scripts\echoshield-demo.exe --padding-test --padding-seconds 3
 ```
 
 成功后会生成：
@@ -95,10 +102,63 @@ output_report.json
 output_report.html
 ```
 
+### 前后加入测试音
+
+默认前后各 3 秒：
+
+```powershell
+.\.venv\Scripts\echoshield.exe input.mp4 `
+  -o output.mp4 `
+  --profile codec `
+  --padding-test `
+  --padding-seconds 3 `
+  --keep-workdir
+```
+
+该模式的行为：
+
+- 前置和后置各加入指定时长的低电平粉红噪声测试段。
+- 使用固定随机种子，因此同一版本每次结果可复现，不会自动搜索参数。
+- 默认测试音幅度为 `0.0025`，随机种子为 `20260823`；尾部使用下一个种子。
+- `--padding-seconds` 允许范围为 `0.25` 到 `10` 秒。
+- 为保证音视频时长一致，首帧和尾帧会分别冻结相同时长。
+- 只有 padding 模式需要对视频执行 H.264 重新编码；普通模式仍然是视频 `stream copy`。
+- 最终音质指标会先跳过前置 padding，再截取原内容长度进行比较，避免把时间偏移误判成音质损坏。
+- 本地检测器仍对完整输出文件进行测试，因此可以观察检测器面对前后 padding 时的鲁棒性。
+
+启用 `--keep-workdir` 后会额外看到：
+
+```text
+output_work/
+├── original.wav
+├── candidate.wav
+├── candidate_padded.wav
+├── padding_intro.wav
+├── padding_outro.wav
+├── final_mp4_audio.wav
+└── final_mp4_content_aligned.wav
+```
+
+其中：
+
+- `final_mp4_audio.wav`：最终 MP4 的完整音频，包含前后测试段。
+- `final_mp4_content_aligned.wav`：去掉前置测试段后重新对齐的原内容，用于最终音质比较。
+
 ### 快速测试前 60 秒
 
 ```bash
 echoshield input.mp4 -o output.mp4 --profile codec --fast
+```
+
+也可以和 padding 一起使用：
+
+```powershell
+.\.venv\Scripts\echoshield.exe input.mp4 `
+  -o output.mp4 `
+  --profile codec `
+  --fast `
+  --padding-test `
+  --padding-seconds 3
 ```
 
 ### 调整滑动窗口
@@ -122,18 +182,6 @@ echoshield input.mp4 -o output.mp4 --no-detector
 ```bash
 echoshield input.mp4 -o output.mp4 --profile codec --keep-workdir
 ```
-
-会额外生成：
-
-```text
-output_work/
-├── original.wav
-├── candidate.wav
-├── final_mp4_audio.wav
-└── ...
-```
-
-其中 `final_mp4_audio.wav` 是从最终输出 MP4 再抽出来的音频，报告中的最终指标以它为准。
 
 ## Profile
 
@@ -203,45 +251,15 @@ tests/
 └── test_detector.py
 ```
 
-## 完整处理链路
-
-```text
-input.mp4
-   │
-   ├─ video stream ───────────────────────────────┐
-   │                                             │ stream copy
-   └─ audio                                      │
-       ↓                                         │
-     PCM WAV                                     │
-       ↓                                         │
-     profile transform                           │
-       ↓                                         │
-     candidate.wav                               │
-       ↓                                         │
-     AAC encode + MP4 mux  ←─────────────────────┘
-       ↓
-     output.mp4
-       ↓
-     再次抽取最终音频
-       ↓
-     final_mp4_audio.wav
-       ↓
-   ┌───────────────┬────────────────┐
-   │质量指标       │本地相似度检测  │
-   └───────┬───────┴────────┬───────┘
-           ↓                ↓
-       report.json      report.html
-```
-
 ## 开发验证
 
 ```bash
 pytest -q
 echoshield-doctor
-echoshield-demo --output-dir demo_output --duration 6 --profile codec
+echoshield-demo --output-dir demo_output --duration 6 --profile codec --padding-test --padding-seconds 1
 ```
 
-CI 也会运行同样的 MP4 端到端检查，并使用 ffprobe 确认输出文件同时包含视频流和 AAC 音频流。
+CI 会实际生成 MP4、执行 padding、重新封装，并使用 ffprobe 确认输出文件同时包含视频流和 AAC 音频流，同时检查输出时长确实增长。
 
 ## 后续计划
 
